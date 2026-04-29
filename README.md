@@ -151,4 +151,4 @@ Vinod will use Claude Haiku (cached system prompt) to summarise each session. Fa
 
 ---
 
-<img src="https://raw.githubusercontent.com/motornomad/assets/main/vinod.png" width="300"/>
+<img src="https://raw.githubusercontent.com/motornomad/agent_vinod/master/assets/agent_vinod.png" width="300"/>
