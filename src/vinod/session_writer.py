@@ -238,9 +238,11 @@ def handle_start_hook(payload: dict) -> str | None:
     if beliefs:
         out.extend(["", "## Active Beliefs (hard invariants — override episodic)"])
         for b in beliefs:
-            out.append(f"[{b.get('domain', '?')}] {b.get('summary', '')}")
-            if b.get("detail"):
-                out.append(f"  {b['detail'][:300]}")
+            fact = b.get("fact") or b.get("summary", "")
+            domain = b.get("domain", "?")
+            conf = b.get("confidence")
+            conf_str = f" ({int(conf * 100)}%)" if conf is not None else ""
+            out.append(f"[{domain}]{conf_str} {fact}")
 
     out.extend([
         "",

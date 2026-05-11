@@ -117,3 +117,43 @@ def episode_count() -> int:
     if not EPISODIC_FILE.exists():
         return 0
     return sum(1 for line in EPISODIC_FILE.read_text().splitlines() if line.strip())
+
+
+def search_episodes(project: str | None = None, tags: list | None = None, limit: int = 20) -> list:
+    if not EPISODIC_FILE.exists():
+        return []
+    results = []
+    for line in EPISODIC_FILE.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if project and project.lower() not in e.get("project", "").lower():
+            continue
+        if tags:
+            entry_tags = [t.lower() for t in e.get("tags", [])]
+            if not any(t.lower() in entry_tags for t in tags):
+                continue
+        results.append(e)
+    return results[-limit:]
+
+
+def update_belief(belief_id: str, confidence: float | None = None, retire: bool = False) -> bool:
+    """Update a belief by id. Returns True if found and updated."""
+    if not BELIEFS_FILE.exists():
+        return False
+    try:
+        store = json.loads(BELIEFS_FILE.read_text())
+    except Exception:
+        return False
+    for b in store.get("beliefs", []):
+        if b.get("id") == belief_id:
+            if retire:
+                b["confidence"] = 0.0
+            elif confidence is not None:
+                b["confidence"] = max(0.0, min(1.0, confidence))
+            BELIEFS_FILE.write_text(json.dumps(store, indent=2) + "\n")
+            return True
+    return False

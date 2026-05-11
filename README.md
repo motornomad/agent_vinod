@@ -4,6 +4,8 @@
 
 No context pasting. No handoff docs. Vinod stores what you built, what you decided, and what's next — and surfaces it automatically at the start of every Claude Code session.
 
+GitHub: [motornomad/agent_vinod](https://github.com/motornomad/agent_vinod)
+
 ---
 
 ## Install
@@ -70,6 +72,7 @@ If you have an Anthropic API key configured (`vinod config set-api-key <key>`), 
 │   └── guardrails.md           # hard limits (edit to add constraints)
 └── memory/
     ├── episodic.jsonl          # append-only log of sessions and decisions
+    ├── consolidation_state.json # last consolidation run metadata
     └── semantic/
         └── beliefs.json        # stable invariants that override episodic memory
 ```
@@ -78,7 +81,26 @@ If you have an Anthropic API key configured (`vinod config set-api-key <key>`), 
 
 **Episodic** memory is the rolling log. Every session writes an entry: what project, what was built, which files were touched. The last 15 entries are injected at session start.
 
-**Semantic** memory (`beliefs.json`) is for stable facts that should always hold — architectural constraints, research invariants, hard decisions. Beliefs override episodic when they conflict. You edit this file directly.
+**Semantic** memory (`beliefs.json`) is for stable facts that should always hold — architectural constraints, research invariants, hard decisions. Beliefs override episodic when they conflict. You can edit this file directly, or let `vinod consolidate` promote patterns automatically.
+
+---
+
+## Consolidation: episodic → semantic
+
+After you have a few weeks of sessions, run:
+
+```bash
+vinod consolidate
+```
+
+Vinod reads your recent episodic log, calls Claude Haiku, and promotes recurring patterns into `beliefs.json` automatically. Beliefs are deduplicated and confidence-scored.
+
+```bash
+vinod consolidate --dry-run        # preview without writing
+vinod consolidate --days 60        # read 60 days instead of 30
+```
+
+Requires an API key (`vinod config set-api-key sk-ant-...`). You can also schedule this via cron — e.g., weekly.
 
 ---
 
@@ -91,21 +113,26 @@ Claude Code connects to Vinod via MCP (stdio transport, registered by `vinod ini
 | `read_memory` | Returns the last N episodic entries |
 | `write_episode` | Writes a richer episodic entry than the hook would produce |
 | `get_beliefs` | Returns `beliefs.json` |
+| `search_episodes` | Filters episodic entries by project name and/or tags |
+| `consolidate` | Triggers episodic → semantic promotion (requires API key) |
+| `update_belief` | Adjusts a belief's confidence or retires it |
 
-In practice these are called automatically by the hooks, but you can also invoke them explicitly — e.g., say "close session" to trigger a detailed `write_episode` call that overrides the hook's summary.
+In practice the basic tools are called automatically by the hooks, but you can invoke any of them explicitly — e.g., say "close session" to trigger a detailed `write_episode` call, or "consolidate my memory" to promote today's patterns into beliefs.
 
 ---
 
 ## CLI reference
 
 ```
-vinod init [--no-mcp]          scaffold ~/.vinod/, register MCP and both hooks
-vinod status                   episode count, last 3 entries, beliefs count, MCP state
-vinod log -p <proj> -s <msg>   write a manual episodic entry
-vinod config set-api-key <key> store an Anthropic key for LLM-based session summaries
-vinod config show              show current config
-vinod uninstall                remove ~/.vinod/, deregister hooks and MCP from settings.json
-vinod mcp                      start the MCP server (Claude Code calls this; you don't need to)
+vinod init [--no-mcp]              scaffold ~/.vinod/, register MCP and both hooks
+vinod status                       episode count, recent entries, belief summary, consolidation state
+vinod log -p <proj> -s <msg>       write a manual episodic entry
+vinod consolidate [--days N]       promote episodic patterns into beliefs via Claude API
+  [--dry-run]
+vinod config set-api-key <key>     store an Anthropic key for LLM-based summaries and consolidation
+vinod config show                  show current config
+vinod uninstall                    remove ~/.vinod/, deregister hooks and MCP from settings.json
+vinod mcp                          start the MCP server (Claude Code calls this; you don't need to)
 ```
 
 ---
@@ -115,6 +142,8 @@ vinod mcp                      start the MCP server (Claude Code calls this; you
 **Day 1:** `pip install vinod && vinod init`, restart Claude Code. First session starts cold (empty log). Work normally. At end, say "close session" — Claude writes a detailed first entry.
 
 **Day 2+:** Open Claude Code, send any message. Vinod injects your memory. Claude briefs you on yesterday's work and asks what's next. You answer. No context pasting required.
+
+**After a few weeks:** Run `vinod consolidate`. Stable patterns from your session history become beliefs that persist across all future sessions.
 
 **Checking state:**
 
@@ -126,8 +155,12 @@ Episodic entries : 31
 Last 3 entries:
   [2026-04-27T21:59] my-project -- Added auth middleware; deployed to staging
   [2026-04-27T21:38] my-project -- Wired logging pipeline; fixed retry logic
-  [2026-04-27T04:29] code-server -- Google OAuth + HTTPS proxy live at code.thatshould.work
-Beliefs          : 3
+  [2026-04-27T04:29] code-server -- Google OAuth + HTTPS proxy live
+Beliefs          : 5 total, 5 active
+  [92%] User works primarily on my-project and code-server in parallel
+  [85%] Auth middleware is the current critical path
+  [78%] Deployments go to staging first, then prod after review
+Last consolidate : 2026-04-28T02:00  (+3 beliefs from 28 episodes)
 MCP registered   : yes
 ```
 
@@ -135,19 +168,21 @@ MCP registered   : yes
 
 ## Optional: LLM-based session summaries
 
-By default, session summaries are generated by a rule-based parser (fast, no API key needed). For richer summaries:
+By default, session summaries are generated by a rule-based parser (fast, no API key needed). For richer summaries and consolidation support:
 
 ```bash
 vinod config set-api-key sk-ant-...
 ```
 
-Vinod will use Claude Haiku (cached system prompt) to summarise each session. Falls back to rule-based if the API call fails.
+Vinod will use Claude Haiku (cached system prompt) to summarise each session and to run consolidation. Falls back to rule-based if the API call fails.
 
 ---
 
 ## Status
 
-**0.4.11** — Hook-based session start and end. `vinod init` registers both hooks automatically. No context pasting required. LLM summarisation with Haiku (optional). `vinod config` for API key management. `vinod uninstall` to cleanly remove. Windows fixes: UTF-8 stdout encoding and absolute MCP path registration.
+**0.5.0** — Consolidation: `vinod consolidate` promotes episodic patterns into semantic beliefs via Claude API. New MCP tools: `search_episodes`, `consolidate`, `update_belief`. Richer `vinod status` with belief confidence summary and last consolidation state. Fixed beliefs display bug (beliefs were silently dropped if schema used `fact` field instead of `summary`).
+
+**0.4.11** — Hook-based session start and end. `vinod init` registers both hooks automatically. No context pasting required. LLM summarisation with Haiku (optional). `vinod config` for API key management. `vinod uninstall` to cleanly remove. Windows fixes.
 
 ---
 

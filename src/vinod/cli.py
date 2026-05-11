@@ -98,6 +98,7 @@ def init(no_mcp: bool) -> None:
 def status() -> None:
     """Show current observer and memory status."""
     from vinod.memory import episode_count, read_recent, read_beliefs
+    from vinod.consolidation import last_run_info
 
     if not VINOD_DIR.exists():
         click.echo("Vinod not initialised. Run `vinod init` first.")
@@ -114,8 +115,22 @@ def status() -> None:
             click.echo(f"  [{ts}] {e.get('project', '?')} -- {e.get('summary', '')[:80]}")
 
     beliefs = read_beliefs()
-    n_beliefs = len(beliefs.get("beliefs", []))
-    click.echo(f"Beliefs          : {n_beliefs}")
+    belief_list = beliefs.get("beliefs", [])
+    n_beliefs = len(belief_list)
+    active = [b for b in belief_list if b.get("confidence", 1) > 0]
+    click.echo(f"Beliefs          : {n_beliefs} total, {len(active)} active")
+    if active:
+        top = sorted(active, key=lambda b: b.get("confidence", 0), reverse=True)[:3]
+        for b in top:
+            fact = (b.get("fact") or b.get("summary", ""))[:70]
+            conf = b.get("confidence", 0)
+            click.echo(f"  [{int(conf*100)}%] {fact}")
+
+    state = last_run_info()
+    if state:
+        click.echo(f"Last consolidate : {state.get('last_run', '')[:16]}  (+{state.get('promoted', 0)} beliefs from {state.get('episodes_read', 0)} episodes)")
+    else:
+        click.echo("Last consolidate : never  (run: vinod consolidate)")
 
     mcp_ok = _mcp_registered()
     click.echo(f"MCP registered   : {'yes' if mcp_ok else 'no  (run: vinod init)'}")
@@ -147,6 +162,32 @@ def log(project: str, summary: str, detail: str, tags: tuple, files: tuple, sour
         tags=list(tags),
     )
     click.echo(f"episodic {eid}")
+
+
+@cli.command()
+@click.option("--days", default=30, show_default=True, help="How many days of episodic history to read.")
+@click.option("--dry-run", is_flag=True, help="Preview what would be promoted without writing.")
+def consolidate(days: int, dry_run: bool) -> None:
+    """Promote episodic patterns into semantic beliefs via Claude API."""
+    from vinod.consolidation import run as consolidate_run
+
+    if not VINOD_DIR.exists():
+        click.echo("Vinod not initialised. Run `vinod init` first.")
+        return
+
+    click.echo(f"Reading last {days} days of episodic memory...")
+    result = consolidate_run(days=days, dry_run=dry_run)
+
+    if "error" in result:
+        click.echo(f"Error: {result['error']}", err=True)
+        return
+
+    if dry_run:
+        click.echo(f"Would promote {result['would_promote']} beliefs from {result['episodes_read']} episodes (dry run — nothing written).")
+        for b in result.get("beliefs", []):
+            click.echo(f"  [{b.get('domain','?')}] [{int(b.get('confidence',0)*100)}%] {b.get('fact','')}")
+    else:
+        click.echo(f"Done. Promoted {result['promoted']} new beliefs. Total: {result['total_beliefs']} beliefs from {result['episodes_read']} episodes.")
 
 
 @cli.command()
